@@ -2,21 +2,20 @@
 
 //#define R256_ASSERT(x)
 //#define R256_STDC_ONLY
-#define R128_IMPLEMENTATION
 #define R256_IMPLEMENTATION
 #ifndef NDEBUG
-// #  define R256_DEBUG_VIS  // Disabled due to segfault
+#  define R256_DEBUG_VIS
 #endif
 
 #ifdef __MINGW32__
 #  define __USE_MINGW_ANSI_STDIO 1 // force standard sprintf precision
 #endif
 
+#include "r256.h"
+
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
-#include "r256.h"
 
 static int testsRun, testsFailed;
 
@@ -32,39 +31,32 @@ static int testsRun, testsFailed;
 #  define PRINT_FAILURE(fmt, ...) fprintf(stderr, fmt, __VA_ARGS__)
 #endif
 
-#define R256_TEST_EQ(a, b) do { \
+#define R256_TEST_EQ(v1, v2) do { \
    ++testsRun; \
-   if (r256Cmp(&(a), &(b)) != 0) { \
-      char buf1[128], buf2[128]; \
-      r256ToString(buf1, sizeof(buf1), &(a)); \
-      r256ToString(buf2, sizeof(buf2), &(b)); \
-      PRINT_FAILURE("%s(%d): TEST FAILED: %s != %s\n", \
-         __FILE__, __LINE__, buf1, buf2); \
-      ++testsFailed; \
-   }\
-} while(0)
-
-#define R256_TEST_EQ8(v, r0, r1, r2, r3, r4, r5, r6, r7) do { \
-   ++testsRun; \
-   if (R256_R4(&(v)) != (r0) || R256_R5(&(v)) != (r1) || \
-       R256_R6(&(v)) != (r2) || R256_R7(&(v)) != (r3) || \
-       R256_R8(&(v)) != (r4) || R256_R9(&(v)) != (r5) || \
-       R256_R10(&(v)) != (r6) || R256_R11(&(v)) != (r7)) { \
-      PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%08x%08x%08x%08x.%08x%08x%08x%08x, expected 0x%08x%08x%08x%08x.%08x%08x%08x%08x\n", \
-         __FILE__, __LINE__, R256_R11(&(v)), R256_R10(&(v)), R256_R9(&(v)), R256_R8(&(v)), \
-         R256_R7(&(v)), R256_R6(&(v)), R256_R5(&(v)), R256_R4(&(v)), \
-         (R128_U32)(r7), (R128_U32)(r6), (R128_U32)(r5), (R128_U32)(r4), \
-         (R128_U32)(r3), (R128_U32)(r2), (R128_U32)(r1), (R128_U32)(r0)); \
+   if ((v1).lo != (v2).lo || (v1).hi != (v2).hi) { \
+      PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%016llx%016llx.%016llx%016llx, expected 0x%016llx%016llx.%016llx%016llx\n", \
+         __FILE__, __LINE__, (unsigned long long)R256_R3(&(v1)), (unsigned long long)R256_R2(&(v1)), (unsigned long long)R256_R1(&(v1)), (unsigned long long)R256_R0(&(v1)), \
+         (unsigned long long)R256_R3(&(v2)), (unsigned long long)R256_R2(&(v2)), (unsigned long long)R256_R1(&(v2)), (unsigned long long)R256_R0(&(v2))); \
       ++testsFailed; \
    }\
 } while(0)
 
 #define R256_TEST_EQ2(v, r0, r1) do { \
    ++testsRun; \
-   if ((v).lo != (r0) || (v).hi != (r1)) { \
-      PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%016llx.%016llx, expected 0x%016llx.%016llx\n", \
-         __FILE__, __LINE__, (unsigned long long)(v).hi, (unsigned long long)(v).lo, \
-         (unsigned long long)(r1), (unsigned long long)(r0)); \
+   if ((v).lo != (R256_U128)(r0) || (v).hi != (R256_U128)(r1)) { \
+      PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%016llx%016llx.%016llx%016llx, expected 0x%016llx%016llx.%016llx%016llx\n", \
+         __FILE__, __LINE__, (unsigned long long)R256_R3(&(v)), (unsigned long long)R256_R2(&(v)), (unsigned long long)R256_R1(&(v)), (unsigned long long)R256_R0(&(v)), \
+         (unsigned long long)((R256_U128)(r1) >> 64), (unsigned long long)(r1), (unsigned long long)((R256_U128)(r0) >> 64), (unsigned long long)(r0)); \
+      ++testsFailed; \
+   }\
+} while(0)
+
+#define R256_TEST_EQ4(v, r0, r1, r2, r3) do { \
+   ++testsRun; \
+   if ((v).lo != (((R256_U128)(r1) << 64) | (r0)) || (v).hi != (((R256_U128)(r3) << 64) | (r2))) { \
+      PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%016llx%016llx.%016llx%016llx, expected 0x%016llx%016llx.%016llx%016llx\n", \
+         __FILE__, __LINE__, (unsigned long long)R256_R3(&(v)), (unsigned long long)R256_R2(&(v)), (unsigned long long)R256_R1(&(v)), (unsigned long long)R256_R0(&(v)), \
+         (unsigned long long)(r3), (unsigned long long)(r2), (unsigned long long)(r1), (unsigned long long)(r0)); \
       ++testsFailed; \
    }\
 } while(0)
@@ -86,15 +78,15 @@ static int testsRun, testsFailed;
 
 #define R256_TEST_FLEQ(r, f) do { \
    char bufr[128], buff[128]; \
-   r256ToStringf(bufr, sizeof(bufr), "%#.18f", &(r));\
-   sprintf(buff, "%#.18f", (double)(f)); \
+   r256ToStringf(bufr, sizeof(bufr), "%#.39f", &(r));\
+   sprintf(buff, "%#.39f", (double)(f)); \
    R256_TEST_STRSTREQ(bufr, buff); \
 } while(0)
 
 #define R256_TEST_FLFLEQ(f1, f2) do { \
    char buf1[128], buf2[128]; \
-   sprintf(buf1, "%.18f", (double)(f1)); \
-   sprintf(buf2, "%.18f", (double)(f2)); \
+   sprintf(buf1, "%.39f", (double)(f1)); \
+   sprintf(buf2, "%.39f", (double)(f2)); \
    R256_TEST_STRSTREQ(buf1, buf2); \
 } while(0)
 
@@ -105,16 +97,6 @@ static int testsRun, testsFailed;
          __FILE__, __LINE__, (int)(i1), (int)(i2)); \
       ++testsFailed; \
    } \
-} while(0)
-
-#define R256_TEST_EQ4(v, r0, r1, r2, r3) do { \
-   ++testsRun; \
-   if ((v).lo != (((R256_U128)(r1) << 64) | (r0)) || (v).hi != (((R256_U128)(r3) << 64) | (r2))) { \
-      PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%016llx.%016llx, expected 0x%016llx.%016llx\n", \
-         __FILE__, __LINE__, (unsigned long long)(v).hi, (unsigned long long)(v).lo, \
-         (unsigned long long)(((R256_U128)(r3) << 64) | (r2)), (unsigned long long)(((R256_U128)(r1) << 64) | (r0))); \
-      ++testsFailed; \
-   }\
 } while(0)
 
 static void test_float()
@@ -186,8 +168,8 @@ static void test_float()
 
 static void test_string()
 {
-   char bufa[256];
-   char bufb[256];
+   char bufa[512];
+   char bufb[512];
    R256 a, b;
    double d;
    int reta, retb;
@@ -217,7 +199,7 @@ static void test_string()
    R256_TEST_STRSTREQ(bufa, bufb);
    R256_TEST_INTINTEQ(reta, retb);
 
-   d = (1 / 18446744073709551616.0);
+   d = (1.0 / 340282366920938463463374607431768211456.0);
    r256FromFloat(&a, d);
 
    retb = snprintf(bufb, sizeof(bufb), "%1.200f", d);
@@ -278,10 +260,18 @@ static void test_cmp()
    R256 a, b, c, d;
    int cmp;
 
-   r256FromFloat(&a, 1.5);
-   r256FromFloat(&b, 1.25);
-   r256FromFloat(&c, -0.5);
-   r256FromFloat(&d, -0.75);
+   // Create test values for 256-bit comparison
+   // a = 1.5 (hi=1, lo=0x80000000000000000000000000000000)
+   R256_SET2(&a, (R256_U128)1 << 127, 1);
+   
+   // b = 1.25 (hi=1, lo=0x40000000000000000000000000000000)
+   R256_SET2(&b, (R256_U128)1 << 126, 1);
+   
+   // c = -0.5 (hi=0, lo=0x80000000000000000000000000000000 sign-extended)
+   R256_SET2(&c, (R256_U128)1 << 127, (R256_U128)-1);
+   
+   // d = -0.75 (hi=0, lo=0x40000000000000000000000000000000 sign-extended)
+   R256_SET2(&d, (R256_U128)1 << 126, (R256_U128)-1);
 
    cmp = r256Cmp(&a, &a);
    R256_TEST_FLFLEQ(cmp, 0);
@@ -321,30 +311,30 @@ static void test_div()
 {
    R256 a, b, c;
 
-   R256_SET2(&a, R128_LIT_U64(0x000022ef000023510), R128_LIT_U64(97276714306369));
-   R256_SET2(&b, R128_LIT_U64(0x00006b3700000000), R128_LIT_U64(23806));
+   r256FromString(&a, "97276714306369.00003331527114698671", NULL);
+   r256FromString(&b, "23806.00000639050267636776", NULL);
    r256Div(&c, &a, &b);
-   R256_TEST_STREQ(c, "4086226761.33142724434097380796");
+   R256_TEST_STREQ(c, "4086226761.3314272443409737572619997338651003847204");
 
-   R256_SET2(&a, 0, 10);
-   R256_SET2(&b, 0, 3);
+   r256FromString(&a, "10", NULL);
+   r256FromString(&b, "3", NULL);
    r256Div(&c, &a, &b);
-   R256_TEST_STREQ(c, "3.333333333333333333333");
+   R256_TEST_STREQ(c, "3.3333333333333333333333333333333333333333333333333");
 
-   R256_SET2(&a, 0, R128_LIT_U64(2113123919594));
-   R256_SET2(&b, 0, R128_LIT_U64(0xffffffffffffd159));
+   r256FromString(&a, "2113123919594", NULL);
+   r256FromString(&b, "-11943", NULL);
    r256Div(&c, &a, &b);
-   R256_TEST_STREQ(c, "-176934096.92656786402076530185");
+   R256_TEST_STREQ(c, "-176934096.92656786402076530185045633425437494766809");
 
-   R256_SET2(&a, 0, R128_LIT_U64(62727997390472));
-   R256_SET2(&b, 0, R128_LIT_U64(154));
+   r256FromString(&a, "62727997390472", NULL);
+   r256FromString(&b, "154", NULL);
    r256Div(&c, &a, &b);
-   R256_TEST_STREQ(c, "407324658379.68831168831168831169");
+   R256_TEST_STREQ(c, "407324658379.68831168831168831168831168831168831169");
 
    r256FromInt(&a, 100);
    r256FromString(&b, "10.003048780487804878", NULL);
    r256Div(&c, &a, &b);
-   R256_TEST_STREQ(c, "9.99695214873514172513");
+   R256_TEST_STREQ(c, "9.9969521487351417251325666669856026417562087981322");
 
    r256Copy(&a, &R256_one);
    r256Shr(&a, &a, 2);
@@ -385,60 +375,60 @@ static void test_shift()
 
    R256_SET4(&a, 5, 0, 0, 0);
    r256Shl(&b, &a, 1);
-   R256_TEST_EQ8(b, 0x0000000a, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x000000000000000a, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000);
    r256Shl(&b, &a, 65);
-   R256_TEST_EQ8(b, 0x00000000, 0x0000000a, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x000000000000000a, 0x0000000000000000, 0x0000000000000000);
    r256Shl(&b, &a, 129);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x0000000a, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0x000000000000000a, 0x0000000000000000);
    r256Shl(&b, &a, 193);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x0000000a, 0x00000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x000000000000000a);
 
    R256_SET4(&a, 5, 0, 0, 0);
    r256Shl(&b, &a, 0);
-   R256_TEST_EQ8(b, 0x00000005, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000005, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000);
    r256Shl(&b, &a, 64);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000005, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000005, 0x0000000000000000, 0x0000000000000000);
    r256Shl(&b, &a, 128);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000005, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0x0000000000000005, 0x0000000000000000);
    r256Shl(&b, &a, 192);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000005, 0x00000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000005);
 
-   R256_SET8(&a, 0, 0, 0, 0, 0, 0, 0, 0xa0000000);
+   R256_SET4(&a, 0, 0, 0, 0xa000000000000000);
    r256Shr(&b, &a, 1);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x50000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0x5000000000000000);
    r256Shr(&b, &a, 65);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x50000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0x5000000000000000, 0x0000000000000000);
    r256Shr(&b, &a, 129);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x50000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x5000000000000000, 0x0000000000000000, 0x0000000000000000);
    r256Shr(&b, &a, 193);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x50000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x5000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000);
 
    r256Shr(&b, &a, 0);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xa0000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0xa000000000000000);
    r256Shr(&b, &a, 64);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xa0000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0xa000000000000000, 0x0000000000000000);
    r256Shr(&b, &a, 128);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xa0000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0xa000000000000000, 0x0000000000000000, 0x0000000000000000);
    r256Shr(&b, &a, 192);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xa0000000, 0x00000000, 0x00000000, 0x00000000);
+   R256_TEST_EQ4(b, 0xa000000000000000, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000);
 
    r256Sar(&b, &a, 1);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xd0000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0xd000000000000000);
    r256Sar(&b, &a, 65);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xd0000000, 0xffffffff);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0xd000000000000000, 0xffffffffffffffff);
    r256Sar(&b, &a, 129);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xd0000000, 0xffffffff, 0xffffffff);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0xd000000000000000, 0xffffffffffffffff, 0xffffffffffffffff);
    r256Sar(&b, &a, 193);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xd0000000, 0xffffffff, 0xffffffff, 0xffffffff);
+   R256_TEST_EQ4(b, 0xd000000000000000, 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff);
 
    r256Sar(&b, &a, 0);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xa0000000);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0x0000000000000000, 0xa000000000000000);
    r256Sar(&b, &a, 64);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xa0000000, 0xffffffff);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0x0000000000000000, 0xa000000000000000, 0xffffffffffffffff);
    r256Sar(&b, &a, 128);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xa0000000, 0xffffffff, 0xffffffff);
+   R256_TEST_EQ4(b, 0x0000000000000000, 0xa000000000000000, 0xffffffffffffffff, 0xffffffffffffffff);
    r256Sar(&b, &a, 192);
-   R256_TEST_EQ8(b, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0xa0000000, 0xffffffff, 0xffffffff, 0xffffffff);
+   R256_TEST_EQ4(b, 0xa000000000000000, 0xffffffffffffffff, 0xffffffffffffffff, 0xffffffffffffffff);
 }
 
 static void test_sqrt()
@@ -612,9 +602,9 @@ int main()
    test_string();
    test_sign();
    test_cmp();
-   //test_mod();
-   //test_div();
-   //test_shift();
+   test_mod();
+   test_div();
+   test_shift();
    test_sqrt();
    test_floor();
    test_ceil();
