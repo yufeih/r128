@@ -18,36 +18,6 @@
 #include <stdlib.h>
 #include "r256.h"
 
-// Define missing macros for R256
-#define R256_U32 R128_U32
-#define R256_U64 R128_U64
-
-// Helper macros for R256 structure access
-#define R256_R0(x) R128_R0(&(x)->lo)
-#define R256_R1(x) R128_R1(&(x)->lo)
-#define R256_R2(x) R128_R2(&(x)->lo)
-#define R256_R3(x) R128_R3(&(x)->lo)
-#define R256_R4(x) R128_R0(&(x)->hi)
-#define R256_R5(x) R128_R1(&(x)->hi)
-#define R256_R6(x) R128_R2(&(x)->hi)
-#define R256_R7(x) R128_R3(&(x)->hi)
-
-// Helper macros for R256 construction
-#define R256_SET2(x, r0, r1) do { \
-   R128_SET2(&(x)->lo, r0, r1); \
-   R128_SET2(&(x)->hi, 0, 0); \
-} while(0)
-
-#define R256_SET4(x, r0, r1, r2, r3) do { \
-   R128_SET4(&(x)->lo, r0, r1, r2, r3); \
-   R128_SET2(&(x)->hi, 0, 0); \
-} while(0)
-
-#define R256_SET8(x, r0, r1, r2, r3, r4, r5, r6, r7) do { \
-   R128_SET4(&(x)->lo, r0, r1, r2, r3); \
-   R128_SET4(&(x)->hi, r4, r5, r6, r7); \
-} while(0)
-
 static int testsRun, testsFailed;
 
 #if defined(_MSC_VER) && !defined(NDEBUG)
@@ -76,28 +46,25 @@ static int testsRun, testsFailed;
 
 #define R256_TEST_EQ8(v, r0, r1, r2, r3, r4, r5, r6, r7) do { \
    ++testsRun; \
-   if ((v).lo.lo != (((R256_U64)(r1) << 32) | (r0)) || \
-       (v).lo.hi != (((R256_U64)(r3) << 32) | (r2)) || \
-       (v).hi.lo != (((R256_U64)(r5) << 32) | (r4)) || \
-       (v).hi.hi != (((R256_U64)(r7) << 32) | (r6))) { \
+   if (R256_R4(&(v)) != (r0) || R256_R5(&(v)) != (r1) || \
+       R256_R6(&(v)) != (r2) || R256_R7(&(v)) != (r3) || \
+       R256_R8(&(v)) != (r4) || R256_R9(&(v)) != (r5) || \
+       R256_R10(&(v)) != (r6) || R256_R11(&(v)) != (r7)) { \
       PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%08x%08x%08x%08x.%08x%08x%08x%08x, expected 0x%08x%08x%08x%08x.%08x%08x%08x%08x\n", \
-         __FILE__, __LINE__, R256_R7(&(v)), R256_R6(&(v)), R256_R5(&(v)), R256_R4(&(v)), \
-         R256_R3(&(v)), R256_R2(&(v)), R256_R1(&(v)), R256_R0(&(v)), \
-         (R256_U32)(r7), (R256_U32)(r6), (R256_U32)(r5), (R256_U32)(r4), \
-         (R256_U32)(r3), (R256_U32)(r2), (R256_U32)(r1), (R256_U32)(r0)); \
+         __FILE__, __LINE__, R256_R11(&(v)), R256_R10(&(v)), R256_R9(&(v)), R256_R8(&(v)), \
+         R256_R7(&(v)), R256_R6(&(v)), R256_R5(&(v)), R256_R4(&(v)), \
+         (R128_U32)(r7), (R128_U32)(r6), (R128_U32)(r5), (R128_U32)(r4), \
+         (R128_U32)(r3), (R128_U32)(r2), (R128_U32)(r1), (R128_U32)(r0)); \
       ++testsFailed; \
    }\
 } while(0)
 
 #define R256_TEST_EQ2(v, r0, r1) do { \
    ++testsRun; \
-   if ((v).lo.lo != (r0) || (v).lo.hi != (r1) || \
-       (v).hi.lo != 0 || (v).hi.hi != 0) { \
-      PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%08x%08x%08x%08x.%08x%08x%08x%08x, expected 0x%08x%08x%08x%08x.%08x%08x%08x%08x\n", \
-         __FILE__, __LINE__, R256_R7(&(v)), R256_R6(&(v)), R256_R5(&(v)), R256_R4(&(v)), \
-         R256_R3(&(v)), R256_R2(&(v)), R256_R1(&(v)), R256_R0(&(v)), \
-         0, 0, 0, 0, \
-         (R256_U32)((R256_U64)(r1) >> 32), (R256_U32)(r1), (R256_U32)((R256_U64)(r0) >> 32), (R256_U32)(r0)); \
+   if ((v).lo != (r0) || (v).hi != (r1)) { \
+      PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%016llx.%016llx, expected 0x%016llx.%016llx\n", \
+         __FILE__, __LINE__, (unsigned long long)(v).hi, (unsigned long long)(v).lo, \
+         (unsigned long long)(r1), (unsigned long long)(r0)); \
       ++testsFailed; \
    }\
 } while(0)
@@ -138,6 +105,16 @@ static int testsRun, testsFailed;
          __FILE__, __LINE__, (int)(i1), (int)(i2)); \
       ++testsFailed; \
    } \
+} while(0)
+
+#define R256_TEST_EQ4(v, r0, r1, r2, r3) do { \
+   ++testsRun; \
+   if ((v).lo != (((R256_U128)(r1) << 64) | (r0)) || (v).hi != (((R256_U128)(r3) << 64) | (r2))) { \
+      PRINT_FAILURE("%s(%d): TEST FAILED: Got 0x%016llx.%016llx, expected 0x%016llx.%016llx\n", \
+         __FILE__, __LINE__, (unsigned long long)(v).hi, (unsigned long long)(v).lo, \
+         (unsigned long long)(((R256_U128)(r3) << 64) | (r2)), (unsigned long long)(((R256_U128)(r1) << 64) | (r0))); \
+      ++testsFailed; \
+   }\
 } while(0)
 
 static void test_float()
@@ -298,11 +275,13 @@ static void test_sign()
 
 static void test_cmp()
 {
-   R256 a = { { R128_LIT_U64(0x8000000000000000), 1 }, { 0, 0 } };     //1.5
-   R256 b = { { R128_LIT_U64(0x4000000000000000), 1 }, { 0, 0 } };     //1.25
-   R256 c = { { R128_LIT_U64(0x8000000000000000), R128_LIT_U64(0xffffffffffffffff) }, { 0, 0 } };    //-0.5
-   R256 d = { { R128_LIT_U64(0x4000000000000000), R128_LIT_U64(0xffffffffffffffff) }, { 0, 0 } };    //-0.75
+   R256 a, b, c, d;
    int cmp;
+
+   r256FromFloat(&a, 1.5);
+   r256FromFloat(&b, 1.25);
+   r256FromFloat(&c, -0.5);
+   r256FromFloat(&d, -0.75);
 
    cmp = r256Cmp(&a, &a);
    R256_TEST_FLFLEQ(cmp, 0);
@@ -635,12 +614,12 @@ int main()
    test_cmp();
    //test_mod();
    //test_div();
-   // test_shift();
-   // test_sqrt();
-   // test_floor();
-   // test_ceil();
-   // test_int();
-   // test_round();
+   //test_shift();
+   test_sqrt();
+   test_floor();
+   test_ceil();
+   test_int();
+   test_round();
 
    printf("%d tests run. %d tests passed. %d tests failed.\n",
       testsRun, testsRun - testsFailed, testsFailed);

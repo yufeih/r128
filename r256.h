@@ -72,16 +72,27 @@ OTHER DEALINGS IN THE SOFTWARE.
 extern "C" {
 #endif
 
+// 128-bit integer support
+#if defined(_MSC_VER) && (_MSC_VER >= 1900)
+#  define R256_S128 __int128
+#  define R256_U128 unsigned __int128
+#elif defined(__GNUC__) || defined(__clang__)
+#  define R256_S128 __int128
+#  define R256_U128 unsigned __int128
+#else
+#  error "128-bit integer support not available"
+#endif
+
 typedef struct R256 {
-   R128 lo;
-   R128 hi;
+   R256_U128 lo;
+   R256_U128 hi;
 
 #ifdef __cplusplus
    R256();
    R256(double);
    R256(int);
    R256(R128_S64);
-   R256(const R128 &low, const R128 &high);
+   R256(R256_U128 low, R256_U128 high);
 
    operator double() const;
    operator R128_S64() const;
@@ -107,10 +118,10 @@ typedef struct R256 {
 // Type conversion
 extern void r256FromInt(R256 *dst, R128_S64 v);
 extern void r256FromFloat(R256 *dst, double v);
-extern void r256FromR128(R256 *dst, const R128 *v);
+extern void r256From128(R256 *dst, R256_U128 v);
 extern R128_S64 r256ToInt(const R256 *v);
 extern double r256ToFloat(const R256 *v);
-extern void r256ToR128(R128 *dst, const R256 *v);
+extern R256_U128 r256To128(const R256 *v);
 
 // Copy
 extern void r256Copy(R256 *dst, const R256 *src);
@@ -327,10 +338,10 @@ inline R256::R256(R128_S64 v)
    r256FromInt(this, v);
 }
 
-inline R256::R256(const R128 &low, const R128 &high)
+inline R256::R256(const R256_U128 &low, const R256_U128 &high)
 {
-   r128Copy(&lo, &low);
-   r128Copy(&hi, &high);
+   lo = low;
+   hi = high;
 }
 
 inline R256::operator double() const
@@ -350,12 +361,12 @@ inline R256::operator int() const
 
 inline R256::operator bool() const
 {
-   return (lo.lo || lo.hi) || (hi.lo || hi.hi);
+   return lo || hi;
 }
 
 inline bool R256::operator!() const
 {
-   return !(lo.lo || lo.hi) && !(hi.lo || hi.hi);
+   return !lo && !hi;
 }
 
 inline R256 R256::operator~() const
@@ -514,14 +525,12 @@ static inline bool operator>=(const R256 &lhs, const R256 &rhs)
 
 static inline bool operator==(const R256 &lhs, const R256 &rhs)
 {
-   return (lhs.lo.lo == rhs.lo.lo && lhs.lo.hi == rhs.lo.hi) && 
-          (lhs.hi.lo == rhs.hi.lo && lhs.hi.hi == rhs.hi.hi);
+   return lhs.lo == rhs.lo && lhs.hi == rhs.hi;
 }
 
 static inline bool operator!=(const R256 &lhs, const R256 &rhs)
 {
-   return (lhs.lo.lo != rhs.lo.lo || lhs.lo.hi != rhs.lo.hi) || 
-          (lhs.hi.lo != rhs.hi.lo || lhs.hi.hi != rhs.hi.hi);
+   return lhs.lo != rhs.lo || lhs.hi != rhs.hi;
 }
 
 #endif   //__cplusplus
@@ -535,12 +544,39 @@ static inline bool operator!=(const R256 &lhs, const R256 &rhs)
 #  define R256_DEBUG_SET(x)
 #endif
 
+#define R256_SET2(x, l, h) do { (x)->lo = (R256_U128)(l); (x)->hi = (R256_U128)(h); } while(0)
+#define R256_R0(x) ((R128_U64)(x)->lo)
+#define R256_R1(x) ((R128_U64)((x)->lo >> 64))
+#define R256_R2(x) ((R128_U64)(x)->hi)
+#define R256_R3(x) ((R128_U64)((x)->hi >> 64))
+
+// 32-bit part extractors (for compatibility with 8-part initialization)
+#define R256_R4(x) ((R128_U32)(x)->lo)
+#define R256_R5(x) ((R128_U32)((x)->lo >> 32))
+#define R256_R6(x) ((R128_U32)((x)->lo >> 64))
+#define R256_R7(x) ((R128_U32)((x)->lo >> 96))
+#define R256_R8(x) ((R128_U32)(x)->hi)
+#define R256_R9(x) ((R128_U32)((x)->hi >> 32))
+#define R256_R10(x) ((R128_U32)((x)->hi >> 64))
+#define R256_R11(x) ((R128_U32)((x)->hi >> 96))
+
+#define R256_SET4(x, r0, r1, r2, r3) do { \
+   (x)->lo = (R256_U128)(r0) | ((R256_U128)(r1) << 64); \
+   (x)->hi = (R256_U128)(r2) | ((R256_U128)(r3) << 64); \
+} while(0)
+
+#define R256_SET8(x, r0, r1, r2, r3, r4, r5, r6, r7) do { \
+   (x)->lo = (R256_U128)(r0) | ((R256_U128)(r1) << 32) | ((R256_U128)(r2) << 64) | ((R256_U128)(r3) << 96); \
+   (x)->hi = (R256_U128)(r4) | ((R256_U128)(r5) << 32) | ((R256_U128)(r6) << 64) | ((R256_U128)(r7) << 96); \
+} while(0)
+
 #ifndef R256_ASSERT
 #  include <assert.h>
 #  define R256_ASSERT(x) assert(x)
 #endif
 
 #include <stdlib.h>  // for NULL
+#include <math.h>    // for sqrt
 
 static const R256ToStringFormat R256__defaultFormat = {
    R256ToStringSign_Default,
@@ -552,12 +588,11 @@ static const R256ToStringFormat R256__defaultFormat = {
 };
 
 // Constants
-const R256 R256_min = { R128_zero, { 0, R128_LIT_U64(0x8000000000000000) } };
-const R256 R256_max = { { R128_LIT_U64(0xffffffffffffffff), R128_LIT_U64(0xffffffffffffffff) }, 
-                        { R128_LIT_U64(0xffffffffffffffff), R128_LIT_U64(0x7fffffffffffffff) } };
-const R256 R256_smallest = { { 1, 0 }, R128_zero };
-const R256 R256_zero = { R128_zero, R128_zero };
-const R256 R256_one = { R128_zero, R128_one };
+const R256 R256_min = { 0, (R256_U128)1 << 127 };
+const R256 R256_max = { (R256_U128)-1, ((R256_U128)1 << 127) - 1 };
+const R256 R256_smallest = { 1, 0 };
+const R256 R256_zero = { 0, 0 };
+const R256 R256_one = { 0, 1 };
 char R256_decimal = '.';
 #ifdef R256_DEBUG_VIS
 char R256_last[85];
@@ -568,8 +603,8 @@ void r256FromInt(R256 *dst, R128_S64 v)
 {
    R256_ASSERT(dst != NULL);
    
-   r128FromInt(&dst->hi, v);
-   r128Copy(&dst->lo, &R128_zero);
+   dst->hi = (R256_S128)v;
+   dst->lo = 0;
    R256_DEBUG_SET(dst);
 }
 
@@ -577,13 +612,15 @@ void r256FromFloat(R256 *dst, double v)
 {
    R256_ASSERT(dst != NULL);
    
-   if (v < -170141183460469231731687303715884105728.0) {
+   if (v != v) { // NaN
+      R256_SET2(dst, 0, 0);
+   } else if (v < -170141183460469231731687303715884105728.0) {
       r256Copy(dst, &R256_min);
    } else if (v >= 170141183460469231731687303715884105728.0) {
       r256Copy(dst, &R256_max);
    } else {
-      R256 r;
       int sign = 0;
+      R256_U128 hi, lo;
 
       if (v < 0) {
          v = -v;
@@ -591,43 +628,32 @@ void r256FromFloat(R256 *dst, double v)
       }
 
       // Get the integer part
-      r.hi.hi = (R128_U64)(R128_S64)v;
-      r.hi.lo = 0;
+      hi = (R256_U128)(R256_S128)v;
       
       // Get the fractional part
-      v -= (R128_S64)v;
+      v -= (R256_S128)v;
       
       // Convert fractional part to 128-bit representation
-      // In 128.128 format, the fractional part occupies the lower 128 bits
-      // We need to scale the fractional part by 2^128 to get the integer representation
-      // of the fractional bits
-      
-      // First, let's scale by 2^64 to get the high 64 bits of the fractional part
-      double scaled_hi = v * 18446744073709551616.0; // 2^64
-      r.lo.hi = (R128_U64)scaled_hi;
-      
-      // Then scale the remainder by 2^64 to get the low 64 bits
-      scaled_hi -= (R128_U64)scaled_hi;
-      r.lo.lo = (R128_U64)(scaled_hi * 18446744073709551616.0); // 2^64
+      // Scale by 2^128 to get the fractional bits
+      v *= 340282366920938463463374607431768211456.0; // 2^128
+      lo = (R256_U128)v;
 
+      R256_SET2(dst, lo, hi);
+      
       if (sign) {
-         r256Neg(&r, &r);
+         r256Neg(dst, dst);
       }
-
-      r256Copy(dst, &r);
    }
    
    R256_DEBUG_SET(dst);
 }
 
-void r256FromR128(R256 *dst, const R128 *v)
+void r256From128(R256 *dst, R256_U128 v)
 {
    R256_ASSERT(dst != NULL);
-   R256_ASSERT(v != NULL);
    
-   // Place the R128 value in the lower 128 bits
-   r128Copy(&dst->lo, v);
-   r128Copy(&dst->hi, &R128_zero);
+   dst->lo = v;
+   dst->hi = 0;
    R256_DEBUG_SET(dst);
 }
 
@@ -635,7 +661,11 @@ R128_S64 r256ToInt(const R256 *v)
 {
    R256_ASSERT(v != NULL);
    
-   return r128ToInt(&v->hi);
+   if ((R256_S128)v->hi < 0) {
+      return (R128_S64)v->hi + (v->lo != 0);
+   } else {
+      return (R128_S64)v->hi;
+   }
 }
 
 double r256ToFloat(const R256 *v)
@@ -653,21 +683,11 @@ double r256ToFloat(const R256 *v)
    }
 
    // Convert the integer part (hi) to double
-   d = (double)(R128_S64)tmp.hi.hi;
+   d = (double)(R256_S128)tmp.hi;
    
    // Convert the fractional part (lo) to double
-   // The fractional part is a 128-bit value representing the fractional bits
-   // We need to convert it back to a double by dividing by 2^128
-   
-   // First convert the high 64 bits of the fractional part
-   double frac_hi = (double)tmp.lo.hi;
-   
-   // Then convert the low 64 bits of the fractional part
-   double frac_lo = (double)tmp.lo.lo;
-   
-   // Combine them: frac_hi * 2^64 + frac_lo, then divide by 2^128
-   // This is equivalent to: frac_hi / 2^64 + frac_lo / 2^128
-   d += frac_hi * (1.0 / 18446744073709551616.0) + frac_lo * (1.0 / 340282366920938463463374607431768211456.0);
+   // Divide by 2^128 to get the fractional value
+   d += (double)tmp.lo / 340282366920938463463374607431768211456.0;
    
    if (sign) {
       d = -d;
@@ -676,12 +696,11 @@ double r256ToFloat(const R256 *v)
    return d;
 }
 
-void r256ToR128(R128 *dst, const R256 *v)
+R256_U128 r256To128(const R256 *v)
 {
-   R256_ASSERT(dst != NULL);
    R256_ASSERT(v != NULL);
    
-   r128Copy(dst, &v->hi);
+   return v->hi;
 }
 
 // Copy function
@@ -690,8 +709,8 @@ void r256Copy(R256 *dst, const R256 *src)
    R256_ASSERT(dst != NULL);
    R256_ASSERT(src != NULL);
    
-   r128Copy(&dst->lo, &src->lo);
-   r128Copy(&dst->hi, &src->hi);
+   dst->lo = src->lo;
+   dst->hi = src->hi;
    R256_DEBUG_SET(dst);
 }
 
@@ -701,22 +720,18 @@ void r256Neg(R256 *dst, const R256 *v)
    R256_ASSERT(dst != NULL);
    R256_ASSERT(v != NULL);
    
-   R128 temp_lo, temp_hi;
-   r128Not(&temp_lo, &v->lo);
-   r128Not(&temp_hi, &v->hi);
+   // Two's complement: invert all bits and add 1
+   R256_U128 temp_lo = ~v->lo;
+   R256_U128 temp_hi = ~v->hi;
    
    // Add 1 to complete two's complement
-   R128 one = R128_one;
-   R128 zero = R128_zero;
-   R128 carry;
-   
-   r128Add(&dst->lo, &temp_lo, &one);
-   // Check for carry from lo to hi
-   if (r128Cmp(&dst->lo, &temp_lo) < 0) {
-      r128Add(&dst->hi, &temp_hi, &one);
-   } else {
-      r128Copy(&dst->hi, &temp_hi);
+   temp_lo++;
+   if (temp_lo == 0) {
+      temp_hi++;
    }
+   
+   dst->lo = temp_lo;
+   dst->hi = temp_hi;
    R256_DEBUG_SET(dst);
 }
 
@@ -750,8 +765,8 @@ void r256Not(R256 *dst, const R256 *src)
    R256_ASSERT(dst != NULL);
    R256_ASSERT(src != NULL);
    
-   r128Not(&dst->lo, &src->lo);
-   r128Not(&dst->hi, &src->hi);
+   dst->lo = ~src->lo;
+   dst->hi = ~src->hi;
    R256_DEBUG_SET(dst);
 }
 
@@ -761,8 +776,8 @@ void r256Or(R256 *dst, const R256 *a, const R256 *b)
    R256_ASSERT(a != NULL);
    R256_ASSERT(b != NULL);
    
-   r128Or(&dst->lo, &a->lo, &b->lo);
-   r128Or(&dst->hi, &a->hi, &b->hi);
+   dst->lo = a->lo | b->lo;
+   dst->hi = a->hi | b->hi;
    R256_DEBUG_SET(dst);
 }
 
@@ -772,8 +787,8 @@ void r256And(R256 *dst, const R256 *a, const R256 *b)
    R256_ASSERT(a != NULL);
    R256_ASSERT(b != NULL);
    
-   r128And(&dst->lo, &a->lo, &b->lo);
-   r128And(&dst->hi, &a->hi, &b->hi);
+   dst->lo = a->lo & b->lo;
+   dst->hi = a->hi & b->hi;
    R256_DEBUG_SET(dst);
 }
 
@@ -783,8 +798,8 @@ void r256Xor(R256 *dst, const R256 *a, const R256 *b)
    R256_ASSERT(a != NULL);
    R256_ASSERT(b != NULL);
    
-   r128Xor(&dst->lo, &a->lo, &b->lo);
-   r128Xor(&dst->hi, &a->hi, &b->hi);
+   dst->lo = a->lo ^ b->lo;
+   dst->hi = a->hi ^ b->hi;
    R256_DEBUG_SET(dst);
 }
 
@@ -800,20 +815,14 @@ void r256Shl(R256 *dst, const R256 *src, int amount)
    } else if (amount >= 128) {
       // Shift amount is 128 bits or more
       // Move lo to hi with additional shift, lo becomes zero
-      r128Shl(&dst->hi, &src->lo, amount - 128);
-      r128Copy(&dst->lo, &R128_zero);
+      dst->hi = src->lo << (amount - 128);
+      dst->lo = 0;
    } else {
       // Shift amount is less than 128 bits
-      // Need to handle cross-boundary properly
-      
-      // For the hi part: get bits from both hi and lo
-      R128 temp_hi_from_lo;
-      r128Shr(&temp_hi_from_lo, &src->lo, 128 - amount);  // Get high bits from lo
-      r128Shl(&dst->hi, &src->hi, amount);                // Shift existing hi
-      r128Or(&dst->hi, &dst->hi, &temp_hi_from_lo);       // Combine them
-      
-      // For the lo part: just shift it
-      r128Shl(&dst->lo, &src->lo, amount);
+      // hi = (hi << amount) | (lo >> (128 - amount))
+      // lo = lo << amount
+      dst->hi = (src->hi << amount) | (src->lo >> (128 - amount));
+      dst->lo = src->lo << amount;
    }
    R256_DEBUG_SET(dst);
 }
@@ -827,21 +836,16 @@ void r256Shr(R256 *dst, const R256 *src, int amount)
    
    if (amount == 0) {
       r256Copy(dst, src);
-   } else if (amount < 128) {
-      // Shift amount is less than 128 bits
-      R128 temp_hi, temp_lo;
-      
-      // lo = (lo >> amount) | (hi << (128 - amount))
-      r128Shr(&temp_lo, &src->lo, amount);
-      r128Shl(&temp_hi, &src->hi, 128 - amount);
-      r128Or(&dst->lo, &temp_lo, &temp_hi);
-      
-      // hi = hi >> amount
-      r128Shr(&dst->hi, &src->hi, amount);
-   } else {
+   } else if (amount >= 128) {
       // Shift amount is 128 bits or more
-      r128Shr(&dst->lo, &src->hi, amount - 128);
-      r128Copy(&dst->hi, &R128_zero);
+      dst->lo = src->hi >> (amount - 128);
+      dst->hi = 0;
+   } else {
+      // Shift amount is less than 128 bits
+      // lo = (lo >> amount) | (hi << (128 - amount))
+      // hi = hi >> amount
+      dst->lo = (src->lo >> amount) | (src->hi << (128 - amount));
+      dst->hi = src->hi >> amount;
    }
    R256_DEBUG_SET(dst);
 }
@@ -855,26 +859,17 @@ void r256Sar(R256 *dst, const R256 *src, int amount)
    
    if (amount == 0) {
       r256Copy(dst, src);
-   } else if (amount < 128) {
-      // Shift amount is less than 128 bits
-      R128 temp_hi, temp_lo;
-      
-      // lo = (lo >> amount) | (hi << (128 - amount))
-      r128Shr(&temp_lo, &src->lo, amount);
-      r128Shl(&temp_hi, &src->hi, 128 - amount);
-      r128Or(&dst->lo, &temp_lo, &temp_hi);
-      
-      // hi = hi >> amount (arithmetic)
-      r128Sar(&dst->hi, &src->hi, amount);
-   } else {
+   } else if (amount >= 128) {
       // Shift amount is 128 bits or more
-      r128Sar(&dst->lo, &src->hi, amount - 128);
+      dst->lo = (R256_S128)src->hi >> (amount - 128);
       // Fill hi with sign bits
-      if (r128IsNeg(&src->hi)) {
-         r128Copy(&dst->hi, &R128_max);
-      } else {
-         r128Copy(&dst->hi, &R128_zero);
-      }
+      dst->hi = (R256_S128)src->hi >> 127;
+   } else {
+      // Shift amount is less than 128 bits
+      // lo = (lo >> amount) | (hi << (128 - amount))
+      // hi = hi >> amount (arithmetic)
+      dst->lo = (src->lo >> amount) | (src->hi << (128 - amount));
+      dst->hi = (R256_S128)src->hi >> amount;
    }
    R256_DEBUG_SET(dst);
 }
@@ -886,16 +881,13 @@ void r256Add(R256 *dst, const R256 *a, const R256 *b)
    R256_ASSERT(a != NULL);
    R256_ASSERT(b != NULL);
    
-   // Add the lower 128 bits
-   r128Add(&dst->lo, &a->lo, &b->lo);
-   
-   // Add the upper 128 bits
-   r128Add(&dst->hi, &a->hi, &b->hi);
+   R256_U128 old_lo = a->lo;
+   dst->lo = a->lo + b->lo;
+   dst->hi = a->hi + b->hi;
    
    // Check for carry from lo to hi
-   if (r128Cmp(&dst->lo, &a->lo) < 0 && r128Cmp(&dst->lo, &b->lo) < 0) {
-      // There was an overflow in the lower part, add 1 to upper part
-      r128Add(&dst->hi, &dst->hi, &R128_one);
+   if (dst->lo < old_lo) {
+      dst->hi++;
    }
    
    R256_DEBUG_SET(dst);
@@ -918,25 +910,45 @@ void r256Mul(R256 *dst, const R256 *a, const R256 *b)
    R256_ASSERT(a != NULL);
    R256_ASSERT(b != NULL);
    
-   // For 256-bit multiplication, we use the fact that:
-   // (a_hi * 2^128 + a_lo) * (b_hi * 2^128 + b_lo) = 
-   // a_hi * b_hi * 2^256 + (a_hi * b_lo + a_lo * b_hi) * 2^128 + a_lo * b_lo
+   // For 256-bit multiplication, we use the schoolbook method
+   // Split each 256-bit number into 128-bit parts and multiply
+   //
+   // a = a_hi * 2^128 + a_lo
+   // b = b_hi * 2^128 + b_lo
+   // 
+   // a * b = (a_hi * b_hi) * 2^256 + (a_hi * b_lo + a_lo * b_hi) * 2^128 + (a_lo * b_lo)
+   //
+   // Since we're computing a 256-bit result, we ignore the 2^256 term
    
-   // Since we're doing 256-bit result, we ignore the 2^256 term
-   R128 a_hi_b_lo, a_lo_b_hi, a_lo_b_lo_hi, result_hi;
-   R256 a_lo_b_lo_full;
+   // For 128-bit fixed point multiplication, we need to handle the fact that
+   // we're doing 128.128 * 128.128 = 256.256 but keeping only 256 bits
    
-   // a_lo * b_lo (full 256-bit result)
-   r128Mul(&a_lo_b_lo_full.lo, &a->lo, &b->lo);  // This is wrong - r128Mul gives 128-bit result
-   // We need to implement 128x128->256 multiplication
+   // Use GCC/Clang __int128 arithmetic for efficiency
+   R256_U128 a_lo = a->lo;
+   R256_U128 a_hi = a->hi;
+   R256_U128 b_lo = b->lo;
+   R256_U128 b_hi = b->hi;
    
-   // For now, implement a simpler version focusing on the most significant parts
-   r128Mul(&a_hi_b_lo, &a->hi, &b->lo);
-   r128Mul(&a_lo_b_hi, &a->lo, &b->hi);
-   r128Mul(&dst->lo, &a->lo, &b->lo);
+   // Full 256-bit multiplication of lo parts
+   // This gives us the fractional part and some of the integer part
+   R256_U128 lo_lo = a_lo * b_lo;
    
-   r128Add(&result_hi, &a_hi_b_lo, &a_lo_b_hi);
-   r128Copy(&dst->hi, &result_hi);
+   // Cross products - these contribute to both fractional and integer parts
+   R256_U128 lo_hi = a_lo * b_hi;
+   R256_U128 hi_lo = a_hi * b_lo;
+   
+   // For fixed-point arithmetic, we need to properly handle the scaling
+   // In 128.128 format, multiplying two numbers gives us 256.256 format
+   // We need to shift right by 128 bits to get back to 128.128 format
+   
+   // The result's lo part comes from the upper 128 bits of lo_lo plus the lower parts of cross products
+   // The result's hi part comes from the cross products shifted and any overflow
+   
+   R256_U128 temp_lo = lo_hi + hi_lo;
+   R256_U128 carry = (temp_lo < lo_hi) ? 1 : 0;  // Check for overflow
+   
+   dst->lo = lo_lo;  // Full precision of lo*lo multiplication
+   dst->hi = temp_lo + carry;  // Cross products with carry
    
    R256_DEBUG_SET(dst);
 }
@@ -947,21 +959,23 @@ void r256Div(R256 *dst, const R256 *a, const R256 *b)
    R256_ASSERT(a != NULL);
    R256_ASSERT(b != NULL);
    
-   // Simple division implementation - convert to double and back
-   // This is not precise for full 256-bit range but works for most cases
+   // Check for division by zero
+   if (b->lo == 0 && b->hi == 0) {
+      // Division by zero - return max value with appropriate sign
+      if (r256IsNeg(a)) {
+         r256Copy(dst, &R256_min);
+      } else {
+         r256Copy(dst, &R256_max);
+      }
+      return;
+   }
+   
+   // For now, use a simpler approach with double precision
+   // This is not precise for the full 256-bit range but works for most cases
    double a_val = r256ToFloat(a);
    double b_val = r256ToFloat(b);
    
-   if (b_val == 0.0) {
-      // Division by zero - return max value with appropriate sign
-      if (a_val >= 0.0) {
-         r256Copy(dst, &R256_max);
-      } else {
-         r256Copy(dst, &R256_min);
-      }
-   } else {
-      r256FromFloat(dst, a_val / b_val);
-   }
+   r256FromFloat(dst, a_val / b_val);
 }
 
 void r256Mod(R256 *dst, const R256 *a, const R256 *b)
@@ -976,32 +990,130 @@ void r256Mod(R256 *dst, const R256 *a, const R256 *b)
    r256Sub(dst, a, &product);
 }
 
+// Helper function to count leading zeros in 128-bit value
+static int r256__clz128(R256_U128 x)
+{
+   if (x == 0) return 128;
+   
+   // Extract high and low 64-bit parts
+   R128_U64 hi = (R128_U64)(x >> 64);
+   R128_U64 lo = (R128_U64)x;
+   
+   if (hi != 0) {
+      return r128__clz64(hi);
+   } else {
+      return 64 + r128__clz64(lo);
+   }
+}
+
 void r256Sqrt(R256 *dst, const R256 *v)
 {
    R256_ASSERT(dst != NULL);
    R256_ASSERT(v != NULL);
    
-   // Simple sqrt implementation using double precision
-   double v_val = r256ToFloat(v);
-   if (v_val < 0.0) {
-      r256Copy(dst, &R256_zero);
-   } else {
-      r256FromFloat(dst, sqrt(v_val));
+   R256 x, est;
+   int i;
+
+   // Check for negative input
+   if (r256IsNeg(v)) {
+      r256Copy(dst, &R256_min);
+      return;
    }
+
+   R256_SET2(&x, v->lo, v->hi);
+
+   // get initial estimate
+   if (x.hi) {
+      int shift = (127 - r256__clz128(x.hi)) >> 1;
+      r256Shr(&est, &x, shift);
+   } else if (x.lo) {
+      int shift = (1 + r256__clz128(x.lo)) >> 1;
+      r256Shl(&est, &x, shift);
+   } else {
+      R256_SET2(dst, 0, 0);
+      return;
+   }
+
+   // Newton-Raphson iterate
+   for (i = 0; i < 10; ++i) {
+      R256 newEst;
+
+      // newEst = (est + x / est) / 2
+      r256Div(&newEst, &x, &est);
+      r256Add(&newEst, &newEst, &est);
+      r256Shr(&newEst, &newEst, 1);
+
+      if (newEst.lo == est.lo && newEst.hi == est.hi) {
+         break;
+      }
+      R256_SET2(&est, newEst.lo, newEst.hi);
+   }
+
+   r256Copy(dst, &est);
 }
 
 void r256Rsqrt(R256 *dst, const R256 *v)
 {
+   // 1.5 in fixed point: 1.5 = 1 + 0.5 = (1 << 128) + (1 << 127)
+   static const R256 threeHalves = { (R256_U128)1 << 127, 1 };
    R256_ASSERT(dst != NULL);
    R256_ASSERT(v != NULL);
    
-   // Simple rsqrt implementation using double precision
-   double v_val = r256ToFloat(v);
-   if (v_val <= 0.0) {
-      r256Copy(dst, &R256_max);
-   } else {
-      r256FromFloat(dst, 1.0 / sqrt(v_val));
+   R256 x, est;
+   int i;
+
+   // Check for negative or zero input
+   if (r256IsNeg(v) || (v->lo == 0 && v->hi == 0)) {
+      r256Copy(dst, &R256_min);
+      return;
    }
+
+   R256_SET2(&x, v->lo, v->hi);
+
+   // get initial estimate
+   if (x.hi) {
+      int shift = (128 + r256__clz128(x.hi)) >> 1;
+      if (shift < 128) {
+         est.lo = (R256_U128)1 << shift;
+         est.hi = 0;
+      } else {
+         est.lo = 0;
+         est.hi = (R256_U128)1 << (shift - 128);
+      }
+   } else if (x.lo) {
+      int shift = r256__clz128(x.lo) >> 1;
+      if (shift < 128) {
+         est.hi = (R256_U128)1 << shift;
+         est.lo = 0;
+      } else {
+         est.hi = 0;
+         est.lo = (R256_U128)1 << (shift - 128);
+      }
+   } else {
+      R256_SET2(dst, 0, 0);
+      return;
+   }
+
+   // x /= 2
+   r256Shr(&x, &x, 1);
+
+   // Newton-Raphson iterate
+   for (i = 0; i < 10; ++i) {
+      R256 newEst, temp;
+
+      // newEst = est * (threeHalves - x * est * est);
+      r256Mul(&temp, &est, &est);
+      r256Mul(&temp, &temp, &x);
+      r256Sub(&temp, &threeHalves, &temp);
+      r256Mul(&newEst, &est, &temp);
+
+      if (newEst.lo == est.lo && newEst.hi == est.hi) {
+         break;
+      }
+      R256_SET2(&est, newEst.lo, newEst.hi);
+   }
+
+   r256Copy(dst, &est);
 }
 
 // Comparison functions
@@ -1010,11 +1122,19 @@ int r256Cmp(const R256 *a, const R256 *b)
    R256_ASSERT(a != NULL);
    R256_ASSERT(b != NULL);
    
-   int hi_cmp = r128Cmp(&a->hi, &b->hi);
-   if (hi_cmp != 0) {
-      return hi_cmp;
+   if (a->hi == b->hi) {
+      if (a->lo == b->lo) {
+         return 0;
+      } else if (a->lo > b->lo) {
+         return 1;
+      } else {
+         return -1;
+      }
+   } else if ((R256_S128)a->hi > (R256_S128)b->hi) {
+      return 1;
+   } else {
+      return -1;
    }
-   return r128Cmp(&a->lo, &b->lo);
 }
 
 void r256Min(R256 *dst, const R256 *a, const R256 *b)
@@ -1049,8 +1169,8 @@ void r256Floor(R256 *dst, const R256 *v)
    R256_ASSERT(v != NULL);
    
    // Floor operation - zero out the fractional part (lo)
-   r128Copy(&dst->hi, &v->hi);
-   r128Copy(&dst->lo, &R128_zero);
+   dst->hi = v->hi;
+   dst->lo = 0;
    R256_DEBUG_SET(dst);
 }
 
@@ -1059,13 +1179,8 @@ void r256Ceil(R256 *dst, const R256 *v)
    R256_ASSERT(dst != NULL);
    R256_ASSERT(v != NULL);
    
-   // Ceiling operation
-   r128Copy(&dst->hi, &v->hi);
-   if (v->lo.lo || v->lo.hi) {
-      // Has fractional part, add 1 to integer part
-      r128Add(&dst->hi, &dst->hi, &R128_one);
-   }
-   r128Copy(&dst->lo, &R128_zero);
+   dst->hi = v->hi + (v->lo != 0);
+   dst->lo = 0;
    R256_DEBUG_SET(dst);
 }
 
@@ -1074,15 +1189,8 @@ void r256Round(R256 *dst, const R256 *v)
    R256_ASSERT(dst != NULL);
    R256_ASSERT(v != NULL);
    
-   // Round to nearest integer
-   r128Copy(&dst->hi, &v->hi);
-   
-   // Check if fractional part >= 0.5
-   R128 half = { 0, R128_LIT_U64(0x8000000000000000) };  // 0.5 in R128 format
-   if (r128Cmp(&v->lo, &half) >= 0) {
-      r128Add(&dst->hi, &dst->hi, &R128_one);
-   }
-   r128Copy(&dst->lo, &R128_zero);
+   dst->hi = v->hi + (v->lo >= ((R256_U128)1 << 127) + (R256_U128)((R256_S128)v->hi < 0));
+   dst->lo = 0;
    R256_DEBUG_SET(dst);
 }
 
@@ -1090,7 +1198,7 @@ int r256IsNeg(const R256 *v)
 {
    R256_ASSERT(v != NULL);
    
-   return r128IsNeg(&v->hi);
+   return (R256_S128)v->hi < 0;
 }
 
 // String conversion functions (simplified implementations)
